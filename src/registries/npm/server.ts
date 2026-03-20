@@ -189,7 +189,7 @@ function handleMetadataRequest(
           postinstall: "node .yokai-canary.js",
         },
         dist: {
-          tarball: `${callbackBaseUrl}/${canary.name}/-/${canary.name}-${canary.version}.tgz`,
+          tarball: `${callbackBaseUrl}/${canary.name}/-/${canary.name.replace(/^@[^/]+\//, "")}-${canary.version}.tgz`,
           shasum: "0000000000000000000000000000000000000000",
         },
       },

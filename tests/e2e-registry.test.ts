@@ -98,6 +98,22 @@ describe("E2E: npm canary registry", () => {
     expect(alerts.some((a) => a.packageName === "@testorg/internal-utils")).toBe(true);
   });
 
+  it("tarball URL from metadata is fetchable", async () => {
+    const metaRes = await fetch(`http://127.0.0.1:${port}/@testorg/internal-utils`);
+    const meta = await metaRes.json() as any;
+    const tarballUrl = meta.versions["0.0.1-canary"].dist.tarball;
+
+    // Tarball filename should NOT include the scope for scoped packages
+    expect(tarballUrl).toContain("/internal-utils-0.0.1-canary.tgz");
+    expect(tarballUrl).not.toContain("/@testorg/internal-utils-0.0.1-canary.tgz");
+
+    // Replace host since metadata uses callbackBaseUrl
+    const fixedUrl = tarballUrl.replace(/http:\/\/localhost:\d+/, `http://127.0.0.1:${port}`);
+    const res = await fetch(fixedUrl);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+  });
+
   it("GET unknown package returns 404", async () => {
     const res = await fetch(`http://127.0.0.1:${port}/nonexistent-pkg`);
     expect(res.status).toBe(404);
