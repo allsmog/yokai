@@ -1,0 +1,38 @@
+{
+  "name": "@allsmog/yokai",
+  "version": "0.1.0",
+  "description": "Supply chain tripwires. Catch dependency attacks before they land.",
+  "type": "module",
+  "bin": {
+    "yokai": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@hono/node-server": "^1.19.11",
+    "@mariozechner/pi-ai": "^0.57.1",
+    "better-sqlite3": "^11.8.1",
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0",
+    "hono": "^4.7.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,33 @@
+version: "3.8"
+
+services:
+  yokai:
+    build: .
+    ports:
+      - "${YOKAI_PORT:-4873}:4873"
+    volumes:
+      - yokai-data:/data
+      - ${YOKAI_REPO_PATH:-.}:/repo:ro
+    environment:
+      - YOKAI_DB_PATH=/data/yokai.sqlite3
+      - YOKAI_LOG_LEVEL=${YOKAI_LOG_LEVEL:-info}
+    command:
+      - deploy
+      - --repo
+      - /repo
+      - --port
+      - "4873"
+      - --host
+      - "0.0.0.0"
+      - --callback-url
+      - ${YOKAI_CALLBACK_URL:-http://localhost:4873}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:4873/_yokai/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+volumes:
+  yokai-data:

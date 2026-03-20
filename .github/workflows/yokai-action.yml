@@ -1,0 +1,65 @@
+name: "Yokai Supply Chain Audit"
+description: "Scan for dependency confusion risks and typosquat threats"
+
+on:
+  workflow_call:
+    inputs:
+      repo-path:
+        description: "Repository path to scan"
+        required: false
+        default: "."
+        type: string
+      sarif-output:
+        description: "SARIF output file path"
+        required: false
+        default: "yokai-results.sarif"
+        type: string
+      fail-on-critical:
+        description: "Fail the workflow if critical alerts are found"
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  yokai-audit:
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install Yokai
+        run: npm install -g @allsmog/yokai
+
+      - name: Scan namespaces
+        env:
+          REPO_PATH: ${{ inputs.repo-path }}
+        run: yokai scan --repo "$REPO_PATH"
+
+      - name: Run typosquat check
+        env:
+          REPO_PATH: ${{ inputs.repo-path }}
+        run: yokai typosquat --repo "$REPO_PATH" || true
+
+      - name: Generate audit report
+        env:
+          REPO_PATH: ${{ inputs.repo-path }}
+          SARIF_PATH: ${{ inputs.sarif-output }}
+        run: |
+          yokai scan --repo "$REPO_PATH" > /dev/null 2>&1
+          yokai report --format sarif -o "$SARIF_PATH" || true
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ inputs.sarif-output }}
+        continue-on-error: true

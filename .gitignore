@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.yokai/
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+.DS_Store
+*.tgz
+coverage/
+.env
+.env.*
+*.log
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
