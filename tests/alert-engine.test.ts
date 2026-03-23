@@ -93,4 +93,44 @@ describe("classifyAlert", () => {
     expect(alert.mitre).toHaveProperty("techniqueName");
     expect(alert.mitre).toHaveProperty("tactic");
   });
+
+  it("classifies auth-bearing GETs as credential-probe", () => {
+    const alert = classifyAlert({
+      runId: "test-run",
+      packageName: "@myorg/utils",
+      sourceIp: "1.2.3.4",
+      userAgent: "npm/9",
+      method: "GET",
+      path: "/@myorg/utils",
+      metadata: { authorizationPresent: true, protocol: "npm" },
+    });
+
+    expect(alert.alertType).toBe("credential-probe");
+    expect(alert.severity).toBe("critical");
+  });
+
+  it("classifies config access as config-tamper", () => {
+    const alert = classifyAlert({
+      runId: "test-run",
+      sourceIp: "1.2.3.4",
+      userAgent: "cargo/1.0",
+      method: "GET",
+      path: "/config.json",
+      metadata: { action: "config-access", protocol: "cargo" },
+    });
+
+    expect(alert.alertType).toBe("config-tamper");
+  });
+
+  it("classifies typosquat claims explicitly", () => {
+    const alert = classifyAlert({
+      runId: "test-run",
+      packageName: "lodasb",
+      method: "GET",
+      path: "/_yokai/typosquat-monitor",
+      metadata: { action: "typosquat-claim", originalPackageName: "lodash" },
+    });
+
+    expect(alert.alertType).toBe("typosquat-claim");
+  });
 });

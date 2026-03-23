@@ -23,6 +23,10 @@ export function scoreSeverity(alertType: AlertType, input: AlertInput): Severity
     score += 1;
   }
 
+  if (input.metadata?.["baselineDeviation"] === true) {
+    score += 1;
+  }
+
   return scoreToSeverity(score);
 }
 

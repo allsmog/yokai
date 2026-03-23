@@ -3,12 +3,13 @@ import { join } from "node:path";
 import type { YokaiTask } from "../dag/types.js";
 import type {
   StageId, YokaiTaskContext, DiscoverNamespacesOutput,
-  GenerateCanariesOutput, CanaryToken,
+  GenerateCanariesOutput, CanaryPackage, CanaryToken,
 } from "../types.js";
 import { createCanaryToken } from "../canary/token.js";
-import { buildCanaryPackage } from "../canary/package-builder.js";
+import { buildCanaryPackage, buildLlmCanaryPackage } from "../canary/package-builder.js";
 import { saveCanaryToken } from "../store/checkpoint.js";
 import { createLogger } from "../logger.js";
+import { resolveStageModel } from "../config.js";
 
 const log = createLogger({ stage: "s2" });
 
@@ -31,7 +32,10 @@ export const s2GenerateCanaries: YokaiTask<unknown, GenerateCanariesOutput> = {
     mkdirSync(outputDir, { recursive: true });
 
     const tokens: CanaryToken[] = [];
-    const packages = [];
+    const packages: CanaryPackage[] = [];
+    const useLlmCanaryGeneration = config.modelExplicitlyConfigured
+      || typeof config.stageModels["s2-generate-canaries"] === "string";
+    const canaryModel = resolveStageModel(config, "s2-generate-canaries");
 
     // Generate canary packages for each scoped namespace
     const scopedNames = s1.namespaces
@@ -47,7 +51,9 @@ export const s2GenerateCanaries: YokaiTask<unknown, GenerateCanariesOutput> = {
       tokens.push(token);
       saveCanaryToken(db, { ...token, runId });
 
-      const pkg = buildCanaryPackage(token, outputDir);
+      const pkg = useLlmCanaryGeneration
+        ? await buildLlmCanaryPackage(token, outputDir, canaryModel)
+        : buildCanaryPackage(token, outputDir);
       packages.push(pkg);
 
       log.info(`Created canary: ${name} (token: ${token.id.slice(0, 8)}...)`);

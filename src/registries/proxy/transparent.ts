@@ -1,10 +1,13 @@
 import { Hono } from "hono";
 import type Database from "better-sqlite3";
 import type { MessageBus } from "../../bus/types.js";
-import type { CanaryPackage, CanaryToken, RegistryInteraction } from "../../types.js";
+import type { CanaryPackage, CanaryToken } from "../../types.js";
 import { saveInteraction, saveAlert } from "../../store/checkpoint.js";
 import { classifyAlert } from "../../detection/alert-engine.js";
+import { withBaselineMetadata } from "../../detection/baseline.js";
+import { maybeEmitCredentialProbe } from "../../detection/emit.js";
 import { createLogger } from "../../logger.js";
+import { createProxyAdapter, type ProxyResponseSpec } from "./adapters.js";
 
 const log = createLogger({ stage: "registry-proxy" });
 
@@ -12,11 +15,14 @@ export interface TransparentProxyOptions {
   db: Database.Database;
   bus: MessageBus;
   runId: string;
+  protocol: "npm" | "pypi" | "maven" | "go" | "cargo";
   /** Package names to intercept (serve canary instead of forwarding). */
   interceptedPackages: Map<string, CanaryPackage>;
   tokens: Map<string, CanaryToken>;
   /** Upstream registry URL (e.g., https://registry.npmjs.org). */
   upstreamUrl: string;
+  upstreamApiUrl?: string;
+  upstreamIndexUrl?: string;
   callbackBaseUrl: string;
   /** Timeout for upstream requests in ms. */
   upstreamTimeoutMs?: number;
@@ -33,10 +39,12 @@ export interface TransparentProxyOptions {
 export function createTransparentProxy(opts: TransparentProxyOptions): Hono {
   const {
     db, bus, runId,
+    protocol,
     interceptedPackages, tokens,
-    upstreamUrl, callbackBaseUrl,
+    upstreamUrl, upstreamApiUrl, upstreamIndexUrl, callbackBaseUrl,
     upstreamTimeoutMs = 15_000,
   } = opts;
+  const adapter = createProxyAdapter({ protocol, upstreamUrl, upstreamApiUrl, upstreamIndexUrl });
 
   const app = new Hono();
 
@@ -45,7 +53,8 @@ export function createTransparentProxy(opts: TransparentProxyOptions): Hono {
     return c.json({
       status: "ok",
       mode: "proxy",
-      upstream: upstreamUrl,
+      protocol,
+      upstream: adapter.describeUpstream(),
       intercepted: interceptedPackages.size,
     });
   });
@@ -84,20 +93,39 @@ export function createTransparentProxy(opts: TransparentProxyOptions): Hono {
     const method = c.req.method;
     const sourceIp = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
     const userAgent = c.req.header("user-agent") ?? "";
+    const authorizationHeader = c.req.header("authorization");
 
     // Extract package name from path
-    const packageName = extractPackageName(path);
+    const match = adapter.match(path, method);
+    const canary = match ? adapter.resolveCanary(match, interceptedPackages) : undefined;
+    const packageName = canary?.name ?? match?.packageName;
 
     // Record all interactions
     recordInteraction(db, runId, method, path, sourceIp, userAgent, packageName);
+    maybeEmitCredentialProbe({
+      db,
+      bus,
+      runId,
+      method,
+      path,
+      sourceIp,
+      userAgent,
+      packageName,
+      authorizationHeader,
+      metadata: { protocol },
+    });
 
     // Check if this is an intercepted package
-    if (packageName && interceptedPackages.has(packageName)) {
+    if (match && (match.requiresCanary === false || canary)) {
       log.warn(`Intercepted request for monitored package: ${packageName} from ${sourceIp}`);
 
-      const canary = interceptedPackages.get(packageName)!;
-
-      // Alert on interception
+      const action = match.kind === "publish"
+        ? "publish-attempt"
+        : match.kind === "download"
+          ? "tarball-download"
+          : match.kind === "config"
+            ? "config-access"
+            : "metadata-resolve";
       const alert = classifyAlert({
         runId,
         packageName,
@@ -105,36 +133,22 @@ export function createTransparentProxy(opts: TransparentProxyOptions): Hono {
         userAgent,
         method,
         path,
-        metadata: { action: "proxy-intercept", upstream: upstreamUrl },
+        metadata: withBaselineMetadata(db, runId, {
+          protocol,
+          method,
+          path,
+          packageName,
+        }, { action, proxy: true, upstream: adapter.describeUpstream() }),
       });
       saveAlert(db, alert);
       emitAlert(bus, runId, alert);
 
-      // Serve canary metadata instead of forwarding
-      if (method === "GET" && !path.includes("/-/")) {
-        return c.json(buildNpmMetadata(canary, callbackBaseUrl));
-      }
-
-      // Publish attempt on intercepted package
-      if (method === "PUT") {
-        const pubAlert = classifyAlert({
-          runId,
-          packageName,
-          sourceIp,
-          userAgent,
-          method: "PUT",
-          path,
-          metadata: { action: "publish-attempt", proxy: true },
-        });
-        saveAlert(db, pubAlert);
-        emitAlert(bus, runId, pubAlert);
-        return c.json({ error: "Forbidden" }, 403);
-      }
+      return sendProxyResponse(c, adapter.buildInterceptResponse(match, canary, callbackBaseUrl));
     }
 
     // Passthrough: forward to upstream
     try {
-      const upstreamPath = new URL(path, upstreamUrl).toString();
+      const upstreamPath = adapter.resolveUpstreamUrl(path);
       log.debug(`Proxying ${method} ${path} → ${upstreamPath}`);
 
       const headers = new Headers();
@@ -168,50 +182,6 @@ export function createTransparentProxy(opts: TransparentProxyOptions): Hono {
   });
 
   return app;
-}
-
-function extractPackageName(path: string): string | undefined {
-  // npm: /@scope/name or /name
-  const cleaned = path.replace(/^\/?/, "");
-  if (!cleaned || cleaned.startsWith("_yokai")) return undefined;
-
-  // Scoped: @scope/name or @scope/name/-/tarball
-  const scopedMatch = cleaned.match(/^(@[^/]+\/[^/]+)/);
-  if (scopedMatch) return scopedMatch[1];
-
-  // Unscoped: name or name/-/tarball
-  const unscopedMatch = cleaned.match(/^([^/]+)/);
-  if (unscopedMatch && !unscopedMatch[1].startsWith("-")) return unscopedMatch[1];
-
-  return undefined;
-}
-
-function buildNpmMetadata(canary: CanaryPackage, callbackBaseUrl: string): Record<string, unknown> {
-  return {
-    _id: canary.name,
-    _rev: "1-0",
-    name: canary.name,
-    description: canary.description,
-    "dist-tags": { latest: canary.version },
-    versions: {
-      [canary.version]: {
-        name: canary.name,
-        version: canary.version,
-        description: canary.description,
-        main: "index.js",
-        scripts: { postinstall: "node .yokai-canary.js" },
-        dist: {
-          tarball: `${callbackBaseUrl}/${canary.name}/-/${canary.name}-${canary.version}.tgz`,
-          shasum: "0000000000000000000000000000000000000000",
-        },
-      },
-    },
-    time: {
-      created: canary.createdAt,
-      modified: canary.createdAt,
-      [canary.version]: canary.createdAt,
-    },
-  };
 }
 
 function recordInteraction(
@@ -249,4 +219,18 @@ function emitAlert(bus: MessageBus, runId: string, alert: { id: string; alertTyp
       sourceIp: alert.sourceIp,
     },
   }).catch(() => {});
+}
+
+function sendProxyResponse(c: any, response: ProxyResponseSpec) {
+  switch (response.kind) {
+    case "json":
+      return c.json(response.body, response.status ?? 200, response.headers);
+    case "html":
+      return c.html(String(response.body), response.status ?? 200, response.headers);
+    case "text":
+      return c.text(String(response.body), response.status ?? 200, response.headers);
+    case "body":
+    default:
+      return c.body(response.body as never, response.status ?? 200, response.headers);
+  }
 }

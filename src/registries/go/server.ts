@@ -4,6 +4,8 @@ import type { MessageBus } from "../../bus/types.js";
 import type { CanaryPackage, CanaryToken } from "../../types.js";
 import { saveInteraction, saveAlert } from "../../store/checkpoint.js";
 import { classifyAlert } from "../../detection/alert-engine.js";
+import { withBaselineMetadata } from "../../detection/baseline.js";
+import { maybeEmitCredentialProbe } from "../../detection/emit.js";
 import { createLogger } from "../../logger.js";
 
 const log = createLogger({ stage: "go-registry" });
@@ -60,12 +62,25 @@ export function createGoRegistryApp(opts: GoRegistryOptions): Hono {
     if (path.startsWith("/_yokai/")) return undefined as any;
     const sourceIp = c.req.header("x-forwarded-for") ?? "unknown";
     const userAgent = c.req.header("user-agent") ?? "";
+    const authorizationHeader = c.req.header("authorization");
 
     // /@v/list
     if (path.endsWith("/@v/list")) {
       const modulePath = extractModulePath(path, "/@v/list");
       log.info(`Go version list: ${modulePath} from ${sourceIp}`);
       record(db, runId, "GET", path, sourceIp, userAgent, modulePath);
+      maybeEmitCredentialProbe({
+        db,
+        bus,
+        runId,
+        method: "GET",
+        path,
+        sourceIp,
+        userAgent,
+        packageName: modulePath,
+        authorizationHeader,
+        metadata: { protocol: "go" },
+      });
       const canary = findModule(modules, modulePath);
       if (!canary) return c.text("not found", 404);
       alertAndEmit(db, bus, runId, modulePath, sourceIp, userAgent, path, "metadata-resolve");
@@ -79,6 +94,18 @@ export function createGoRegistryApp(opts: GoRegistryOptions): Hono {
       const modulePath = extractModulePath(path, `/@v/${version}.info`);
       log.info(`Go version info: ${modulePath}@${version} from ${sourceIp}`);
       record(db, runId, "GET", path, sourceIp, userAgent, modulePath);
+      maybeEmitCredentialProbe({
+        db,
+        bus,
+        runId,
+        method: "GET",
+        path,
+        sourceIp,
+        userAgent,
+        packageName: modulePath,
+        authorizationHeader,
+        metadata: { protocol: "go" },
+      });
       const canary = findModule(modules, modulePath);
       if (!canary) return c.text("not found", 404);
       alertAndEmit(db, bus, runId, modulePath, sourceIp, userAgent, path, "metadata-resolve");
@@ -92,6 +119,18 @@ export function createGoRegistryApp(opts: GoRegistryOptions): Hono {
       const modulePath = extractModulePath(path, `/@v/${version}.mod`);
       log.info(`Go mod request: ${modulePath}@${version} from ${sourceIp}`);
       record(db, runId, "GET", path, sourceIp, userAgent, modulePath);
+      maybeEmitCredentialProbe({
+        db,
+        bus,
+        runId,
+        method: "GET",
+        path,
+        sourceIp,
+        userAgent,
+        packageName: modulePath,
+        authorizationHeader,
+        metadata: { protocol: "go" },
+      });
       const canary = findModule(modules, modulePath);
       if (!canary) return c.text("not found", 404);
       alertAndEmit(db, bus, runId, modulePath, sourceIp, userAgent, path, "metadata-resolve");
@@ -105,6 +144,18 @@ export function createGoRegistryApp(opts: GoRegistryOptions): Hono {
       const modulePath = extractModulePath(path, `/@v/${version}.zip`);
       log.warn(`Go module download: ${modulePath}@${version} from ${sourceIp}`);
       record(db, runId, "GET", path, sourceIp, userAgent, modulePath);
+      maybeEmitCredentialProbe({
+        db,
+        bus,
+        runId,
+        method: "GET",
+        path,
+        sourceIp,
+        userAgent,
+        packageName: modulePath,
+        authorizationHeader,
+        metadata: { protocol: "go" },
+      });
       alertAndEmit(db, bus, runId, modulePath, sourceIp, userAgent, path, "tarball-download");
       return c.body("", 200, { "Content-Type": "application/zip" });
     }
@@ -114,6 +165,18 @@ export function createGoRegistryApp(opts: GoRegistryOptions): Hono {
       const modulePath = extractModulePath(path, "/@latest");
       log.info(`Go latest request: ${modulePath} from ${sourceIp}`);
       record(db, runId, "GET", path, sourceIp, userAgent, modulePath);
+      maybeEmitCredentialProbe({
+        db,
+        bus,
+        runId,
+        method: "GET",
+        path,
+        sourceIp,
+        userAgent,
+        packageName: modulePath,
+        authorizationHeader,
+        metadata: { protocol: "go" },
+      });
       const canary = findModule(modules, modulePath);
       if (!canary) return c.text("not found", 404);
       alertAndEmit(db, bus, runId, modulePath, sourceIp, userAgent, path, "metadata-resolve");
@@ -143,7 +206,20 @@ function findModule(modules: Map<string, CanaryPackage>, query: string): CanaryP
 }
 
 function alertAndEmit(db: Database.Database, bus: MessageBus, runId: string, packageName: string, sourceIp: string, userAgent: string, path: string, action: string) {
-  const alert = classifyAlert({ runId, packageName, sourceIp, userAgent, method: "GET", path, metadata: { action, protocol: "go" } });
+  const alert = classifyAlert({
+    runId,
+    packageName,
+    sourceIp,
+    userAgent,
+    method: "GET",
+    path,
+    metadata: withBaselineMetadata(db, runId, {
+      protocol: "go",
+      method: "GET",
+      path,
+      packageName,
+    }, { action, protocol: "go" }),
+  });
   saveAlert(db, alert);
   emit(bus, runId, alert);
 }

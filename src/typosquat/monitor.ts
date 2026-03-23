@@ -1,6 +1,7 @@
 import { createLogger } from "../logger.js";
 import { checkNpmRegistry, type RegistryCheckResult } from "../discovery/public-registry.js";
 import { generateTyposquatVariants, type TyposquatVariant } from "./generator.js";
+import { generateLlmTyposquatVariants } from "./llm-generator.js";
 
 const log = createLogger({ stage: "typosquat-monitor" });
 
@@ -15,6 +16,8 @@ export interface MonitorResult {
 export interface MonitorOptions {
   /** Package names to generate and monitor typosquat variants for. */
   packageNames: string[];
+  /** Optional model for LLM-generated variants. */
+  model?: string;
   /** Max variants per package to check. */
   maxVariantsPerPackage?: number;
   /** Concurrency for registry checks. */
@@ -30,6 +33,7 @@ export interface MonitorOptions {
 export async function scanForTyposquats(opts: MonitorOptions): Promise<MonitorResult[]> {
   const {
     packageNames,
+    model,
     maxVariantsPerPackage = 20,
     concurrency = 5,
     onClaim,
@@ -38,8 +42,11 @@ export async function scanForTyposquats(opts: MonitorOptions): Promise<MonitorRe
   const allVariants: TyposquatVariant[] = [];
 
   for (const name of packageNames) {
-    const variants = generateTyposquatVariants(name, maxVariantsPerPackage);
-    allVariants.push(...variants);
+    const algorithmicVariants = generateTyposquatVariants(name, maxVariantsPerPackage);
+    const llmVariants = model
+      ? await generateLlmTyposquatVariants(name, model, maxVariantsPerPackage)
+      : [];
+    allVariants.push(...mergeVariants(algorithmicVariants, llmVariants, maxVariantsPerPackage));
   }
 
   log.info(`Checking ${allVariants.length} typosquat variants across ${packageNames.length} packages`);
@@ -121,4 +128,23 @@ export async function startContinuousMonitor(opts: ContinuousMonitorOptions): Pr
   }
 
   log.info("Continuous typosquat monitor stopped");
+}
+
+function mergeVariants(
+  algorithmicVariants: TyposquatVariant[],
+  llmVariants: TyposquatVariant[],
+  maxVariants: number,
+): TyposquatVariant[] {
+  const merged = new Map<string, TyposquatVariant>();
+
+  for (const variant of [...algorithmicVariants, ...llmVariants]) {
+    const existing = merged.get(variant.variant);
+    if (!existing || variant.editDistance < existing.editDistance) {
+      merged.set(variant.variant, variant);
+    }
+  }
+
+  return [...merged.values()]
+    .sort((a, b) => a.editDistance - b.editDistance || a.variant.localeCompare(b.variant))
+    .slice(0, maxVariants);
 }

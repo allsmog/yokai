@@ -4,6 +4,8 @@ import type { MessageBus } from "../../bus/types.js";
 import type { CanaryPackage, CanaryToken } from "../../types.js";
 import { saveInteraction, saveAlert } from "../../store/checkpoint.js";
 import { classifyAlert } from "../../detection/alert-engine.js";
+import { withBaselineMetadata } from "../../detection/baseline.js";
+import { maybeEmitCredentialProbe, persistAndEmitAlert } from "../../detection/emit.js";
 import { createLogger } from "../../logger.js";
 
 const log = createLogger({ stage: "cargo-registry" });
@@ -61,6 +63,35 @@ export function createCargoRegistryApp(opts: CargoRegistryOptions): Hono {
 
   // GET /config.json — registry configuration
   app.get("/config.json", (c) => {
+    const sourceIp = c.req.header("x-forwarded-for") ?? "unknown";
+    const userAgent = c.req.header("user-agent") ?? "";
+    const authorizationHeader = c.req.header("authorization");
+
+    record(db, runId, "GET", c.req.path, sourceIp, userAgent);
+    maybeEmitCredentialProbe({
+      db,
+      bus,
+      runId,
+      method: "GET",
+      path: c.req.path,
+      sourceIp,
+      userAgent,
+      authorizationHeader,
+      metadata: { protocol: "cargo" },
+    });
+    persistAndEmitAlert(db, bus, runId, classifyAlert({
+      runId,
+      sourceIp,
+      userAgent,
+      method: "GET",
+      path: c.req.path,
+      metadata: withBaselineMetadata(db, runId, {
+        protocol: "cargo",
+        method: "GET",
+        path: c.req.path,
+      }, { action: "config-access", protocol: "cargo" }),
+    }));
+
     return c.json({
       dl: `${callbackBaseUrl}/api/v1/crates`,
       api: callbackBaseUrl,
@@ -72,14 +103,40 @@ export function createCargoRegistryApp(opts: CargoRegistryOptions): Hono {
     const name = c.req.param("name");
     const sourceIp = c.req.header("x-forwarded-for") ?? "unknown";
     const userAgent = c.req.header("user-agent") ?? "";
+    const authorizationHeader = c.req.header("authorization");
 
     log.info(`Cargo crate metadata: ${name} from ${sourceIp}`);
     record(db, runId, "GET", c.req.path, sourceIp, userAgent, name);
+    maybeEmitCredentialProbe({
+      db,
+      bus,
+      runId,
+      method: "GET",
+      path: c.req.path,
+      sourceIp,
+      userAgent,
+      packageName: name,
+      authorizationHeader,
+      metadata: { protocol: "cargo" },
+    });
 
     const canary = crates.get(name);
     if (!canary) return c.json({ errors: [{ detail: "Not found" }] }, 404);
 
-    const alert = classifyAlert({ runId, packageName: name, sourceIp, userAgent, method: "GET", path: c.req.path, metadata: { action: "metadata-resolve", protocol: "cargo" } });
+    const alert = classifyAlert({
+      runId,
+      packageName: name,
+      sourceIp,
+      userAgent,
+      method: "GET",
+      path: c.req.path,
+      metadata: withBaselineMetadata(db, runId, {
+        protocol: "cargo",
+        method: "GET",
+        path: c.req.path,
+        packageName: name,
+      }, { action: "metadata-resolve", protocol: "cargo" }),
+    });
     saveAlert(db, alert);
     emit(bus, runId, alert);
 
@@ -115,11 +172,37 @@ export function createCargoRegistryApp(opts: CargoRegistryOptions): Hono {
     const version = c.req.param("version");
     const sourceIp = c.req.header("x-forwarded-for") ?? "unknown";
     const userAgent = c.req.header("user-agent") ?? "";
+    const authorizationHeader = c.req.header("authorization");
 
     log.warn(`Cargo crate download: ${name}@${version} from ${sourceIp}`);
     record(db, runId, "GET", c.req.path, sourceIp, userAgent, name);
+    maybeEmitCredentialProbe({
+      db,
+      bus,
+      runId,
+      method: "GET",
+      path: c.req.path,
+      sourceIp,
+      userAgent,
+      packageName: name,
+      authorizationHeader,
+      metadata: { protocol: "cargo" },
+    });
 
-    const alert = classifyAlert({ runId, packageName: name, sourceIp, userAgent, method: "GET", path: c.req.path, metadata: { action: "tarball-download", protocol: "cargo", version } });
+    const alert = classifyAlert({
+      runId,
+      packageName: name,
+      sourceIp,
+      userAgent,
+      method: "GET",
+      path: c.req.path,
+      metadata: withBaselineMetadata(db, runId, {
+        protocol: "cargo",
+        method: "GET",
+        path: c.req.path,
+        packageName: name,
+      }, { action: "tarball-download", protocol: "cargo", version }),
+    });
     saveAlert(db, alert);
     emit(bus, runId, alert);
 
@@ -130,11 +213,34 @@ export function createCargoRegistryApp(opts: CargoRegistryOptions): Hono {
   app.put("/api/v1/crates/new", (c) => {
     const sourceIp = c.req.header("x-forwarded-for") ?? "unknown";
     const userAgent = c.req.header("user-agent") ?? "";
+    const authorizationHeader = c.req.header("authorization");
 
     log.warn(`Cargo publish attempt from ${sourceIp}`);
     record(db, runId, "PUT", c.req.path, sourceIp, userAgent);
+    maybeEmitCredentialProbe({
+      db,
+      bus,
+      runId,
+      method: "PUT",
+      path: c.req.path,
+      sourceIp,
+      userAgent,
+      authorizationHeader,
+      metadata: { protocol: "cargo" },
+    });
 
-    const alert = classifyAlert({ runId, sourceIp, userAgent, method: "PUT", path: c.req.path, metadata: { action: "publish-attempt", protocol: "cargo" } });
+    const alert = classifyAlert({
+      runId,
+      sourceIp,
+      userAgent,
+      method: "PUT",
+      path: c.req.path,
+      metadata: withBaselineMetadata(db, runId, {
+        protocol: "cargo",
+        method: "PUT",
+        path: c.req.path,
+      }, { action: "publish-attempt", protocol: "cargo" }),
+    });
     saveAlert(db, alert);
     emit(bus, runId, alert);
 
@@ -150,19 +256,45 @@ export function createCargoRegistryApp(opts: CargoRegistryOptions): Hono {
 
     const sourceIp = c.req.header("x-forwarded-for") ?? "unknown";
     const userAgent = c.req.header("user-agent") ?? "";
+    const authorizationHeader = c.req.header("authorization");
 
     // Extract crate name from sparse index path
     const crateName = extractCrateFromIndexPath(path);
 
     log.info(`Cargo sparse index lookup: ${crateName ?? path} from ${sourceIp}`);
     record(db, runId, "GET", path, sourceIp, userAgent, crateName);
+    maybeEmitCredentialProbe({
+      db,
+      bus,
+      runId,
+      method: "GET",
+      path,
+      sourceIp,
+      userAgent,
+      packageName: crateName,
+      authorizationHeader,
+      metadata: { protocol: "cargo" },
+    });
 
     if (!crateName) return c.text("", 404);
 
     const canary = crates.get(crateName);
     if (!canary) return c.text("", 404);
 
-    const alert = classifyAlert({ runId, packageName: crateName, sourceIp, userAgent, method: "GET", path, metadata: { action: "metadata-resolve", protocol: "cargo", indexPath: true } });
+    const alert = classifyAlert({
+      runId,
+      packageName: crateName,
+      sourceIp,
+      userAgent,
+      method: "GET",
+      path,
+      metadata: withBaselineMetadata(db, runId, {
+        protocol: "cargo",
+        method: "GET",
+        path,
+        packageName: crateName,
+      }, { action: "metadata-resolve", protocol: "cargo", indexPath: true }),
+    });
     saveAlert(db, alert);
     emit(bus, runId, alert);
 

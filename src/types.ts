@@ -146,7 +146,13 @@ export interface DiscoveredNamespace {
 // ── Config ──
 
 export interface YokaiConfig {
+  mode: "standalone" | "proxy" | "git-decoy";
+  protocol: "npm" | "pypi" | "maven" | "go" | "cargo";
+  upstreamUrl?: string;
+  upstreamApiUrl?: string;
+  upstreamIndexUrl?: string;
   model: string;
+  modelExplicitlyConfigured: boolean;
   stageModels: Partial<Record<StageId, string>>;
   stages: StageId[];
   resumeRunId?: string;
@@ -157,6 +163,7 @@ export interface YokaiConfig {
   callbackBaseUrl: string;
   repoPath?: string;
   maxBudgetUsd?: number;
+  baselineWindowMs: number;
   verbose: boolean;
 }
 
@@ -207,5 +214,14 @@ export interface ConfigureMonitoringOutput {
 export interface BaselineTrafficOutput {
   baselineInteractions: number;
   baselineDurationMs: number;
+  readyAt: string;
+  baselineWindowMs: number;
+  signatures: Array<{
+    protocol: string;
+    method: string;
+    path: string;
+    packageName?: string;
+    count: number;
+  }>;
   costUsd: number;
 }

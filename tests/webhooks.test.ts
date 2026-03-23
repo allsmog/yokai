@@ -113,6 +113,7 @@ describe("webhooks", () => {
     const config: WebhookConfig = {
       provider: "pagerduty",
       url: `http://127.0.0.1:${port}/webhook`,
+      routingKey: "pd-routing-key",
     };
 
     const ok = await dispatchWebhook(config, mockAlert);
@@ -121,6 +122,19 @@ describe("webhooks", () => {
     const payload = receivedPayloads[0].body as Record<string, unknown>;
     expect(payload.event_action).toBe("trigger");
     expect((payload.payload as Record<string, unknown>).severity).toBe("critical");
+    expect(payload.routing_key).toBe("pd-routing-key");
+  });
+
+  it("returns false for PagerDuty without routing key", async () => {
+    receivedPayloads = [];
+    const config: WebhookConfig = {
+      provider: "pagerduty",
+      url: `http://127.0.0.1:${port}/webhook`,
+    };
+
+    const ok = await dispatchWebhook(config, mockAlert);
+    expect(ok).toBe(false);
+    expect(receivedPayloads.length).toBe(0);
   });
 
   it("filters by minSeverity", async () => {

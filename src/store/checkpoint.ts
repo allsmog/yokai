@@ -1,6 +1,16 @@
 import type Database from "better-sqlite3";
 import type { StageId, CanaryToken, Alert, RegistryInteraction } from "../types.js";
 
+export interface PipelineRunRecord {
+  runId: string;
+  startedAt: string;
+  status: "running" | "complete" | "error" | "paused";
+  configJson: string;
+  totalCostUsd: number;
+  completedAt?: string;
+  updatedAt: string;
+}
+
 // ── Checkpoint CRUD ──
 
 export function saveCheckpoint(
@@ -56,8 +66,12 @@ export function savePipelineRun(
   status: "running" | "complete" | "error" | "paused" = "running",
 ): void {
   db.prepare(`
-    INSERT OR REPLACE INTO pipeline_runs (run_id, started_at, status, config_json, updated_at)
+    INSERT INTO pipeline_runs (run_id, started_at, status, config_json, updated_at)
     VALUES (?, datetime('now'), ?, ?, datetime('now'))
+    ON CONFLICT(run_id) DO UPDATE SET
+      status = excluded.status,
+      config_json = excluded.config_json,
+      updated_at = excluded.updated_at
   `).run(runId, status, configJson);
 }
 
@@ -78,6 +92,46 @@ export function updatePipelineStatus(
       WHERE run_id = ?
     `).run(status, runId);
   }
+}
+
+export function loadPipelineRun(
+  db: Database.Database,
+  runId: string,
+): PipelineRunRecord | null {
+  const row = db.prepare(
+    "SELECT run_id, started_at, status, config_json, total_cost_usd, completed_at, updated_at FROM pipeline_runs WHERE run_id = ?",
+  ).get(runId) as {
+    run_id: string;
+    started_at: string;
+    status: PipelineRunRecord["status"];
+    config_json: string;
+    total_cost_usd: number;
+    completed_at?: string | null;
+    updated_at: string;
+  } | undefined;
+
+  if (!row) return null;
+
+  return {
+    runId: row.run_id,
+    startedAt: row.started_at,
+    status: row.status,
+    configJson: row.config_json,
+    totalCostUsd: row.total_cost_usd,
+    completedAt: row.completed_at ?? undefined,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function loadLatestPipelineRun(
+  db: Database.Database,
+): PipelineRunRecord | null {
+  const row = db.prepare(
+    "SELECT run_id FROM pipeline_runs ORDER BY started_at DESC LIMIT 1",
+  ).get() as { run_id: string } | undefined;
+
+  if (!row) return null;
+  return loadPipelineRun(db, row.run_id);
 }
 
 // ── Canary Token CRUD ──

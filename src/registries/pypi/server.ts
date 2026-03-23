@@ -4,6 +4,8 @@ import type { MessageBus } from "../../bus/types.js";
 import type { CanaryPackage, CanaryToken, RegistryInteraction } from "../../types.js";
 import { saveInteraction, findCanaryTokenById, saveAlert } from "../../store/checkpoint.js";
 import { classifyAlert } from "../../detection/alert-engine.js";
+import { withBaselineMetadata } from "../../detection/baseline.js";
+import { maybeEmitCredentialProbe } from "../../detection/emit.js";
 import { createLogger } from "../../logger.js";
 
 const log = createLogger({ stage: "pypi-registry" });
@@ -99,10 +101,22 @@ export function createPyPIRegistryApp(opts: PyPIRegistryOptions): Hono {
   app.get("/simple/", (c) => {
     const sourceIp = c.req.header("x-forwarded-for") ?? "unknown";
     const userAgent = c.req.header("user-agent") ?? "";
+    const authorizationHeader = c.req.header("authorization");
 
     log.info(`PyPI simple index request from ${sourceIp}`);
 
     recordInteraction(db, runId, "GET", "/simple/", sourceIp, userAgent);
+    maybeEmitCredentialProbe({
+      db,
+      bus,
+      runId,
+      method: "GET",
+      path: "/simple/",
+      sourceIp,
+      userAgent,
+      authorizationHeader,
+      metadata: { protocol: "pypi" },
+    });
 
     const links = [...packages.keys()]
       .map((name) => {
@@ -128,6 +142,7 @@ ${links}
     const pkgParam = c.req.param("pkg");
     const sourceIp = c.req.header("x-forwarded-for") ?? "unknown";
     const userAgent = c.req.header("user-agent") ?? "";
+    const authorizationHeader = c.req.header("authorization");
 
     log.info(`PyPI package request: ${pkgParam} from ${sourceIp}`);
 
@@ -135,6 +150,18 @@ ${links}
     const canary = findPackage(packages, pkgParam);
 
     recordInteraction(db, runId, "GET", `/simple/${pkgParam}/`, sourceIp, userAgent, canary?.name);
+    maybeEmitCredentialProbe({
+      db,
+      bus,
+      runId,
+      method: "GET",
+      path: `/simple/${pkgParam}/`,
+      sourceIp,
+      userAgent,
+      packageName: canary?.name ?? pkgParam,
+      authorizationHeader,
+      metadata: { protocol: "pypi" },
+    });
 
     if (!canary) {
       return c.html(`<!DOCTYPE html>
@@ -150,7 +177,12 @@ ${links}
       userAgent,
       method: "GET",
       path: `/simple/${pkgParam}/`,
-      metadata: { action: "metadata-resolve", protocol: "pypi" },
+      metadata: withBaselineMetadata(db, runId, {
+        protocol: "pypi",
+        method: "GET",
+        path: `/simple/${pkgParam}/`,
+        packageName: canary.name,
+      }, { action: "metadata-resolve", protocol: "pypi" }),
     });
     saveAlert(db, alert);
 
@@ -182,12 +214,25 @@ ${links}
     const fileParam = c.req.param("file");
     const sourceIp = c.req.header("x-forwarded-for") ?? "unknown";
     const userAgent = c.req.header("user-agent") ?? "";
+    const authorizationHeader = c.req.header("authorization");
 
     log.warn(`PyPI package download: ${pkgParam}/${fileParam} from ${sourceIp}`);
 
     const canary = findPackage(packages, pkgParam);
 
     recordInteraction(db, runId, "GET", `/packages/${pkgParam}/${fileParam}`, sourceIp, userAgent, canary?.name);
+    maybeEmitCredentialProbe({
+      db,
+      bus,
+      runId,
+      method: "GET",
+      path: `/packages/${pkgParam}/${fileParam}`,
+      sourceIp,
+      userAgent,
+      packageName: canary?.name ?? pkgParam,
+      authorizationHeader,
+      metadata: { protocol: "pypi" },
+    });
 
     const alert = classifyAlert({
       runId,
@@ -196,7 +241,12 @@ ${links}
       userAgent,
       method: "GET",
       path: `/packages/${pkgParam}/${fileParam}`,
-      metadata: { action: "tarball-download", protocol: "pypi" },
+      metadata: withBaselineMetadata(db, runId, {
+        protocol: "pypi",
+        method: "GET",
+        path: `/packages/${pkgParam}/${fileParam}`,
+        packageName: canary?.name ?? pkgParam,
+      }, { action: "tarball-download", protocol: "pypi" }),
     });
     saveAlert(db, alert);
 
@@ -223,6 +273,7 @@ ${links}
   app.post("/", async (c) => {
     const sourceIp = c.req.header("x-forwarded-for") ?? "unknown";
     const userAgent = c.req.header("user-agent") ?? "";
+    const authorizationHeader = c.req.header("authorization");
 
     log.warn(`PyPI upload attempt from ${sourceIp}`);
 
@@ -236,6 +287,18 @@ ${links}
     }
 
     recordInteraction(db, runId, "POST", "/", sourceIp, userAgent, packageName);
+    maybeEmitCredentialProbe({
+      db,
+      bus,
+      runId,
+      method: "POST",
+      path: "/",
+      sourceIp,
+      userAgent,
+      packageName,
+      authorizationHeader,
+      metadata: { protocol: "pypi" },
+    });
 
     const alert = classifyAlert({
       runId,
@@ -244,7 +307,12 @@ ${links}
       userAgent,
       method: "PUT",
       path: "/upload",
-      metadata: { action: "publish-attempt", protocol: "pypi" },
+      metadata: withBaselineMetadata(db, runId, {
+        protocol: "pypi",
+        method: "PUT",
+        path: "/upload",
+        packageName,
+      }, { action: "publish-attempt", protocol: "pypi" }),
     });
     saveAlert(db, alert);
 

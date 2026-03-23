@@ -67,6 +67,7 @@ describe("Transparent registry proxy", () => {
 
     const proxyApp = createTransparentProxy({
       db, bus, runId,
+      protocol: "npm",
       interceptedPackages: intercepted,
       tokens,
       upstreamUrl: `http://127.0.0.1:${upstreamPort}`,
@@ -144,6 +145,7 @@ describe("Transparent registry proxy", () => {
     const deadPort = proxyPort + 200;
     const deadApp = createTransparentProxy({
       db, bus, runId: "dead-run",
+      protocol: "npm",
       interceptedPackages: new Map(),
       tokens: new Map(),
       upstreamUrl: "http://127.0.0.1:1",

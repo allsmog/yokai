@@ -3,11 +3,15 @@ import { createLogger } from "../logger.js";
 
 const log = createLogger({ stage: "webhooks" });
 
+export const DEFAULT_PAGERDUTY_EVENTS_V2_URL = "https://events.pagerduty.com/v2/enqueue";
+
 export type WebhookProvider = "slack" | "teams" | "pagerduty" | "generic";
 
 export interface WebhookConfig {
   provider: WebhookProvider;
   url: string;
+  /** PagerDuty Events v2 routing key. */
+  routingKey?: string;
   /** Optional secret for HMAC signing (generic webhooks). */
   secret?: string;
   /** Only dispatch alerts at or above this severity. */
@@ -37,7 +41,12 @@ export async function dispatchWebhook(config: WebhookConfig, alert: Alert): Prom
   }
 
   try {
-    const payload = buildPayload(config.provider, alert);
+    if (config.provider === "pagerduty" && (!config.routingKey || config.routingKey.length === 0)) {
+      log.warn("PagerDuty webhook requires a routing key");
+      return false;
+    }
+
+    const payload = buildPayload(config, alert);
     const headers: Record<string, string> = {
       "Content-Type": "application/json",
       "User-Agent": "yokai/0.1.0",
@@ -85,14 +94,14 @@ export async function dispatchToAll(configs: WebhookConfig[], alert: Alert): Pro
   return results;
 }
 
-function buildPayload(provider: WebhookProvider, alert: Alert): Record<string, unknown> {
-  switch (provider) {
+function buildPayload(config: WebhookConfig, alert: Alert): Record<string, unknown> {
+  switch (config.provider) {
     case "slack":
       return buildSlackPayload(alert);
     case "teams":
       return buildTeamsPayload(alert);
     case "pagerduty":
-      return buildPagerDutyPayload(alert);
+      return buildPagerDutyPayload(alert, config.routingKey ?? "");
     case "generic":
     default:
       return buildGenericPayload(alert);
@@ -179,7 +188,7 @@ function buildTeamsPayload(alert: Alert): Record<string, unknown> {
   };
 }
 
-function buildPagerDutyPayload(alert: Alert): Record<string, unknown> {
+function buildPagerDutyPayload(alert: Alert, routingKey: string): Record<string, unknown> {
   const pdSeverity: Record<string, string> = {
     critical: "critical",
     high: "error",
@@ -189,7 +198,7 @@ function buildPagerDutyPayload(alert: Alert): Record<string, unknown> {
   };
 
   return {
-    routing_key: "", // Must be set by the user in the webhook URL or config
+    routing_key: routingKey,
     event_action: "trigger",
     payload: {
       summary: `[Yokai] ${alert.title}`,

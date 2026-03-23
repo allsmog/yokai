@@ -76,6 +76,9 @@ describe("Cargo canary registry", () => {
     const body = await res.json() as Record<string, string>;
     expect(body.dl).toContain("/api/v1/crates");
     expect(body.api).toBeDefined();
+
+    const alerts = loadAlerts(db, runId);
+    expect(alerts.some((a) => a.alertType === "config-tamper")).toBe(true);
   });
 
   it("GET /api/v1/crates/<name> returns crate metadata", async () => {

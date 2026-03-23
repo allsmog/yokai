@@ -38,6 +38,7 @@ export async function runOrchestrator(opts: OrchestratorOptions): Promise<Orches
       const checkpoint = loadCheckpoint(db, runId, stageId);
       if (checkpoint) {
         outputs.set(stageId, checkpoint);
+        totalCostUsd += extractCost(checkpoint);
         log.info(`Restored checkpoint for ${stageId}`);
       }
     }

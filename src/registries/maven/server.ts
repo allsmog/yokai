@@ -4,6 +4,8 @@ import type { MessageBus } from "../../bus/types.js";
 import type { CanaryPackage, CanaryToken, RegistryInteraction } from "../../types.js";
 import { saveInteraction, saveAlert } from "../../store/checkpoint.js";
 import { classifyAlert } from "../../detection/alert-engine.js";
+import { withBaselineMetadata } from "../../detection/baseline.js";
+import { maybeEmitCredentialProbe } from "../../detection/emit.js";
 import { createLogger } from "../../logger.js";
 
 const log = createLogger({ stage: "maven-registry" });
@@ -58,11 +60,24 @@ export function createMavenRegistryApp(opts: MavenRegistryOptions): Hono {
     if (path.startsWith("/_yokai/")) return undefined as any; // Skip internal routes
     const sourceIp = c.req.header("x-forwarded-for") ?? "unknown";
     const userAgent = c.req.header("user-agent") ?? "";
+    const authorizationHeader = c.req.header("authorization");
 
     const { groupId, artifactId } = parseMavenPath(path);
     const key = `${groupId}:${artifactId}`;
 
     record(db, runId, "GET", path, sourceIp, userAgent, key);
+    maybeEmitCredentialProbe({
+      db,
+      bus,
+      runId,
+      method: "GET",
+      path,
+      sourceIp,
+      userAgent,
+      packageName: key,
+      authorizationHeader,
+      metadata: { protocol: "maven" },
+    });
 
     // maven-metadata.xml
     if (path.endsWith("/maven-metadata.xml")) {
@@ -70,7 +85,20 @@ export function createMavenRegistryApp(opts: MavenRegistryOptions): Hono {
       const canary = artifacts.get(key);
       if (!canary) return c.text("Not found", 404);
 
-      const alert = classifyAlert({ runId, packageName: key, sourceIp, userAgent, method: "GET", path, metadata: { action: "metadata-resolve", protocol: "maven" } });
+      const alert = classifyAlert({
+        runId,
+        packageName: key,
+        sourceIp,
+        userAgent,
+        method: "GET",
+        path,
+        metadata: withBaselineMetadata(db, runId, {
+          protocol: "maven",
+          method: "GET",
+          path,
+          packageName: key,
+        }, { action: "metadata-resolve", protocol: "maven" }),
+      });
       saveAlert(db, alert);
       emit(bus, runId, alert);
 
@@ -82,7 +110,20 @@ export function createMavenRegistryApp(opts: MavenRegistryOptions): Hono {
     if (/\.(jar|pom|sha1|md5)$/.test(file)) {
       log.warn(`Maven artifact download: ${key} / ${file} from ${sourceIp}`);
 
-      const alert = classifyAlert({ runId, packageName: key, sourceIp, userAgent, method: "GET", path, metadata: { action: "tarball-download", protocol: "maven", file } });
+      const alert = classifyAlert({
+        runId,
+        packageName: key,
+        sourceIp,
+        userAgent,
+        method: "GET",
+        path,
+        metadata: withBaselineMetadata(db, runId, {
+          protocol: "maven",
+          method: "GET",
+          path,
+          packageName: key,
+        }, { action: "tarball-download", protocol: "maven", file }),
+      });
       saveAlert(db, alert);
       emit(bus, runId, alert);
 
@@ -103,14 +144,40 @@ export function createMavenRegistryApp(opts: MavenRegistryOptions): Hono {
     const path = c.req.path;
     const sourceIp = c.req.header("x-forwarded-for") ?? "unknown";
     const userAgent = c.req.header("user-agent") ?? "";
+    const authorizationHeader = c.req.header("authorization");
 
     const { groupId, artifactId } = parseMavenPath(path);
     const key = `${groupId}:${artifactId}`;
 
     log.warn(`Maven deploy attempt: ${key} from ${sourceIp}`);
     record(db, runId, "PUT", path, sourceIp, userAgent, key);
+    maybeEmitCredentialProbe({
+      db,
+      bus,
+      runId,
+      method: "PUT",
+      path,
+      sourceIp,
+      userAgent,
+      packageName: key,
+      authorizationHeader,
+      metadata: { protocol: "maven" },
+    });
 
-    const alert = classifyAlert({ runId, packageName: key, sourceIp, userAgent, method: "PUT", path, metadata: { action: "publish-attempt", protocol: "maven" } });
+    const alert = classifyAlert({
+      runId,
+      packageName: key,
+      sourceIp,
+      userAgent,
+      method: "PUT",
+      path,
+      metadata: withBaselineMetadata(db, runId, {
+        protocol: "maven",
+        method: "PUT",
+        path,
+        packageName: key,
+      }, { action: "publish-attempt", protocol: "maven" }),
+    });
     saveAlert(db, alert);
     emit(bus, runId, alert);
 

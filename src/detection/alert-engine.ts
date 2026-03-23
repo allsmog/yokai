@@ -48,6 +48,14 @@ function classifyAlertType(input: AlertInput): AlertType {
   const { method, path, metadata } = input;
   const action = metadata?.["action"] as string | undefined;
 
+  if (action === "typosquat-claim") {
+    return "typosquat-claim";
+  }
+
+  if (action === "config-access") {
+    return "config-tamper";
+  }
+
   // Canary callback from postinstall
   if (path.includes("/_yokai/callback/")) {
     // Check if it came from CI
@@ -60,6 +68,10 @@ function classifyAlertType(input: AlertInput): AlertType {
   // Publish attempt
   if (method === "PUT") {
     return "unauthorized-publish";
+  }
+
+  if (metadata?.["authorizationPresent"] === true) {
+    return "credential-probe";
   }
 
   // Tarball download
@@ -103,35 +115,42 @@ function buildDescription(alertType: AlertType, input: AlertInput): string {
   const pkg = input.packageName ?? "unknown";
   const ip = input.sourceIp ?? "unknown";
   const ua = input.userAgent ?? "unknown";
+  const baselineSuffix = input.metadata?.["baselineDeviation"] === true
+    ? " This request was not observed during the baseline window."
+    : "";
 
   switch (alertType) {
     case "dependency-confusion":
       return `A canary package "${pkg}" was installed in a CI/CD environment, indicating a potential dependency confusion attack. ` +
         `Source IP: ${ip}, User-Agent: ${ua}. ` +
-        `This suggests an attacker may have published a package with the same name as an internal dependency.`;
+        `This suggests an attacker may have published a package with the same name as an internal dependency.` +
+        baselineSuffix;
 
     case "unauthorized-publish":
       return `An attempt was made to publish to package "${pkg}" on the canary registry from ${ip}. ` +
-        `This may indicate stolen developer credentials or an attempt to inject malicious code.`;
+        `This may indicate stolen developer credentials or an attempt to inject malicious code.` +
+        baselineSuffix;
 
     case "canary-download":
       return `Canary package "${pkg}" was downloaded/installed from ${ip} (${ua}). ` +
-        `This indicates someone is resolving packages from this canary registry.`;
+        `This indicates someone is resolving packages from this canary registry.` +
+        baselineSuffix;
 
     case "namespace-probe":
       return `Package metadata for "${pkg}" was requested from ${ip} (${ua}). ` +
-        `This may indicate reconnaissance of internal package namespaces.`;
+        `This may indicate reconnaissance of internal package namespaces.` +
+        baselineSuffix;
 
     case "credential-probe":
-      return `Credential-bearing request detected for "${pkg}" from ${ip}.`;
+      return `Credential-bearing request detected for "${pkg}" from ${ip}.` + baselineSuffix;
 
     case "typosquat-claim":
-      return `A typosquat variant of an internal package was claimed: "${pkg}".`;
+      return `A typosquat variant of an internal package was claimed: "${pkg}".` + baselineSuffix;
 
     case "config-tamper":
-      return `Registry configuration was accessed from an unexpected source: ${ip}.`;
+      return `Registry configuration was accessed from an unexpected source: ${ip}.` + baselineSuffix;
 
     default:
-      return `Unclassified registry activity detected for "${pkg}" from ${ip}.`;
+      return `Unclassified registry activity detected for "${pkg}" from ${ip}.` + baselineSuffix;
   }
 }

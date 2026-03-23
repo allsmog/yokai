@@ -4,6 +4,8 @@ import type { MessageBus } from "../../bus/types.js";
 import type { CanaryPackage, CanaryToken, RegistryInteraction } from "../../types.js";
 import { saveInteraction, findCanaryTokenById, saveAlert } from "../../store/checkpoint.js";
 import { classifyAlert } from "../../detection/alert-engine.js";
+import { withBaselineMetadata } from "../../detection/baseline.js";
+import { maybeEmitCredentialProbe } from "../../detection/emit.js";
 import { createLogger } from "../../logger.js";
 
 const log = createLogger({ stage: "npm-registry" });
@@ -148,6 +150,7 @@ function handleMetadataRequest(
 ) {
   const sourceIp = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
   const userAgent = c.req.header("user-agent") ?? "";
+  const authorizationHeader = c.req.header("authorization");
 
   log.info(`Metadata request: ${pkgName} from ${sourceIp}`);
 
@@ -163,6 +166,19 @@ function handleMetadataRequest(
     createdAt: new Date().toISOString(),
   };
   saveInteraction(db, interaction);
+
+  maybeEmitCredentialProbe({
+    db,
+    bus,
+    runId,
+    method: "GET",
+    path: `/${pkgName}`,
+    sourceIp,
+    userAgent,
+    packageName: pkgName,
+    authorizationHeader,
+    metadata: { protocol: "npm" },
+  });
 
   const canary = packages.get(pkgName);
   if (!canary) {
@@ -209,7 +225,12 @@ function handleMetadataRequest(
     userAgent,
     method: "GET",
     path: `/${pkgName}`,
-    metadata: { action: "metadata-resolve" },
+    metadata: withBaselineMetadata(db, runId, {
+      protocol: "npm",
+      method: "GET",
+      path: `/${pkgName}`,
+      packageName: pkgName,
+    }, { action: "metadata-resolve" }),
   });
   saveAlert(db, alert);
 
@@ -232,6 +253,7 @@ function handleTarballRequest(
 ) {
   const sourceIp = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
   const userAgent = c.req.header("user-agent") ?? "";
+  const authorizationHeader = c.req.header("authorization");
 
   log.warn(`Tarball download: ${pkgName} from ${sourceIp}`);
 
@@ -247,6 +269,19 @@ function handleTarballRequest(
   };
   saveInteraction(db, interaction);
 
+  maybeEmitCredentialProbe({
+    db,
+    bus,
+    runId,
+    method: "GET",
+    path: c.req.path,
+    sourceIp,
+    userAgent,
+    packageName: pkgName,
+    authorizationHeader,
+    metadata: { protocol: "npm" },
+  });
+
   const alert = classifyAlert({
     runId,
     packageName: pkgName,
@@ -254,7 +289,12 @@ function handleTarballRequest(
     userAgent,
     method: "GET",
     path: c.req.path,
-    metadata: { action: "tarball-download" },
+    metadata: withBaselineMetadata(db, runId, {
+      protocol: "npm",
+      method: "GET",
+      path: c.req.path,
+      packageName: pkgName,
+    }, { action: "tarball-download" }),
   });
   saveAlert(db, alert);
 
@@ -291,6 +331,7 @@ function handlePublishRequest(
 ) {
   const sourceIp = c.req.header("x-forwarded-for") ?? c.req.header("x-real-ip") ?? "unknown";
   const userAgent = c.req.header("user-agent") ?? "";
+  const authorizationHeader = c.req.header("authorization");
 
   log.warn(`Publish attempt detected: ${pkgName} from ${sourceIp}`);
 
@@ -306,6 +347,19 @@ function handlePublishRequest(
   };
   saveInteraction(db, interaction);
 
+  maybeEmitCredentialProbe({
+    db,
+    bus,
+    runId,
+    method: "PUT",
+    path: `/${pkgName}`,
+    sourceIp,
+    userAgent,
+    packageName: pkgName,
+    authorizationHeader,
+    metadata: { protocol: "npm" },
+  });
+
   const alert = classifyAlert({
     runId,
     packageName: pkgName,
@@ -313,7 +367,12 @@ function handlePublishRequest(
     userAgent,
     method: "PUT",
     path: `/${pkgName}`,
-    metadata: { action: "publish-attempt" },
+    metadata: withBaselineMetadata(db, runId, {
+      protocol: "npm",
+      method: "PUT",
+      path: `/${pkgName}`,
+      packageName: pkgName,
+    }, { action: "publish-attempt" }),
   });
   saveAlert(db, alert);
 
