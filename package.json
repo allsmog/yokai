@@ -6,6 +6,30 @@
   "bin": {
     "yokai": "./dist/cli.js"
   },
+  "keywords": [
+    "supply-chain-security",
+    "dependency-confusion",
+    "typosquatting",
+    "package-registry",
+    "deception",
+    "canarytokens",
+    "sarif",
+    "mitre-attack",
+    "npm",
+    "pypi",
+    "maven",
+    "go",
+    "cargo",
+    "security"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/allsmog/yokai.git"
+  },
+  "homepage": "https://github.com/allsmog/yokai#readme",
+  "bugs": {
+    "url": "https://github.com/allsmog/yokai/issues"
+  },
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/cli.ts",
